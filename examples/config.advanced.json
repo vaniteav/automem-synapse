@@ -1,0 +1,10 @@
+{
+  "mcpServerName": "automem",
+  "server": { "url": "https://your-mcp-automem-host/mcp", "tokenEnv": "AUTOMEM_API_KEY" },
+  "startupRecall": { "enabled": true, "queries": ["user preferences working style", "current environment", "active projects and recent decisions"], "tags": [], "limit": 5, "maxBytes": 4000, "timeoutMs": 12000 },
+  "turnRecall": { "enabled": true, "limit": 5, "maxBytes": 3000, "timeoutMs": 7000, "contextTypes": [], "expandRelations": false, "expandEntities": false },
+  "projectDetection": { "automem-synapse": "automem-synapse" },
+  "projectOverrides": {},
+  "writePolicy": { "mode": "safe-auto", "autoWriteCategories": ["technical-decision", "agent-pattern", "bug-fix", "tooling-lesson"], "confirmCategories": ["personal", "financial", "private", "identity"], "blockedCategories": ["secret", "credential", "api-key", "raw-transcript"], "minImportanceToWrite": 0.7, "dedupeBeforeWrite": true, "dedupeMinScore": 0.85, "alwaysTag": ["agent:claude-code"] },
+  "behavior": { "preferredContentLength": 500, "maxContentLength": 2000 }
+}

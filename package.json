@@ -1,0 +1,13 @@
+{
+  "name": "automem-synapse",
+  "version": "0.1.0",
+  "description": "Automatic AutoMem recall + a fail-closed write gate for Claude Code.",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test tests/*.mjs",
+    "test:smoke": "node --test tests/smoke/*.mjs"
+  },
+  "license": "MIT",
+  "author": "vaniteav"
+}

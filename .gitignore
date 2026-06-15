@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.log
+.env
+.env.*
+*.local
+
+# internal dev docs (specs/plans) — not part of the distributed plugin
+docs/superpowers/

@@ -1,0 +1,7 @@
+{
+  "name": "vaniteav-marketplace",
+  "owner": { "name": "vaniteav" },
+  "plugins": [
+    { "name": "automem-synapse", "source": "./", "description": "Automatic AutoMem recall + fail-closed write gate for Claude Code." }
+  ]
+}
