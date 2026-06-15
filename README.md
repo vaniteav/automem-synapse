@@ -54,13 +54,15 @@ Confirm your mcp-automem sidecar is registered in Claude Code under a server nam
 ## Install
 
 ```bash
-claude plugin install https://github.com/vaniteav/automem-synapse
+claude plugin marketplace add vaniteav/automem-synapse
+claude plugin install automem-synapse@vaniteav-marketplace
 ```
 
 Or point `claude plugin` at a local path during development:
 
 ```bash
-claude plugin install ./
+claude plugin marketplace add ./
+claude plugin install automem-synapse@vaniteav-marketplace
 ```
 
 The plugin registers the three hooks and two commands automatically. Nothing recalls yet — it has no token to talk to your server.
