@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 — 2026-06-21
 - Secret scanner labels Anthropic keys (`sk-ant-…`) as `anthropic-key` instead of `openai-key`; openai pattern excludes the `ant-` prefix so a key yields one finding, not two.
 - CI: GitHub Actions runs the test suite on Node 20 + 22 for pushes and PRs.
 - Added `SECURITY.md` with a private vulnerability-reporting path.
