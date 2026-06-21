@@ -26,6 +26,12 @@ test("clean text has no findings", () => {
   assert.equal(hasSecrets("User prefers Vitest over Jest"), false);
 });
 
+test("anthropic key is labeled anthropic-key, not double-counted as openai", () => {
+  const f = scanForSecrets("sk-ant-" + "api03abcdefghijklmnopqrstuvwx");
+  const kinds = f.map((x) => x.kind);
+  assert.deepEqual(kinds, ["anthropic-key"]);
+});
+
 test("detects JWT, Google API key, Slack token, Stripe live key", () => {
   assert.equal(hasSecrets("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." + "eyJzdWIiOiIxMjM0NSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"), true, "JWT");
   assert.equal(hasSecrets("key AIza" + "SyA1234567890abcdefghijklmnopqrstuvw"), true, "Google API key");

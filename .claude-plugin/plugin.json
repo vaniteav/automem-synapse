@@ -1,6 +1,6 @@
 {
   "name": "automem-synapse",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Automatic AutoMem recall (session start + per turn) and a fail-closed write gate for Claude Code.",
   "author": { "name": "vaniteav" },
   "homepage": "https://github.com/vaniteav/automem-synapse",
