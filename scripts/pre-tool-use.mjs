@@ -19,6 +19,14 @@ function isWriteTool(name, serverName) {
 function toCandidate(input) {
   return { content: input.content, type: input.type || "Context", tags: input.tags || [], importance: input.importance, confidence: input.confidence, metadata: input.metadata, category: input.category };
 }
+// Log WHICH scanner rules fired, not just that one did. Kinds only — never the matched
+// value, and never the content. Without this the log records "secret/privacy scanner found
+// blocked content" and nothing else, so the false-positive rate of any individual rule is
+// invisible; diagnosing the 2026-08-02 secret-assignment over-match required probing the
+// scanner by hand because seven weeks of denials could not answer it.
+function kindsOf(findings) {
+  return Array.isArray(findings) && findings.length ? findings.map((f) => f.kind) : undefined;
+}
 // AutoMem write-tool fields we knowingly forward. Anything outside this allowlist is dropped
 // rather than spread through unvetted (the scanner only inspects content/tags/metadata).
 const EDIT_FIELDS = ["memory_id", "content", "type", "tags", "importance", "confidence", "metadata", "t_valid", "t_invalid", "embedding"];
@@ -49,7 +57,7 @@ function pick(obj, keys) {
     // but not the empty-content / min-importance / dedupe checks that only fit a fresh store.
     if (suffix === "update_memory") {
       const d = evaluateEditPolicy(toCandidate(event.tool_input || {}), config);
-      if (d.action === "block") { appendLog(config.observability.logFile, { hook: "PreToolUse", tool: suffix, decision: "deny", reasons: d.reasons }); emit("deny", "Blocked by automem-synapse: " + d.reasons.join("; ")); return process.exit(0); }
+      if (d.action === "block") { appendLog(config.observability.logFile, { hook: "PreToolUse", tool: suffix, decision: "deny", reasons: d.reasons, findings: kindsOf(d.findings) }); emit("deny", "Blocked by automem-synapse: " + d.reasons.join("; ")); return process.exit(0); }
       if (d.action === "confirm") { appendLog(config.observability.logFile, { hook: "PreToolUse", tool: suffix, decision: "ask", reasons: d.reasons }); emit("ask", "Confirm edit: " + d.reasons.join("; ")); return process.exit(0); }
       appendLog(config.observability.logFile, { hook: "PreToolUse", tool: suffix, decision: "allow" });
       emit("allow", "Vetted by automem-synapse (edit)", pick(event.tool_input, EDIT_FIELDS));
@@ -67,6 +75,25 @@ function pick(obj, keys) {
         emit("deny", `Blocked by automem-synapse: secret detected in ${suffix} payload`);
         return process.exit(0);
       }
+      // Past here the payload is secret-clean — but that is ALL this gate checked, and
+      // "no secrets in the arguments" is not an opinion about whether the operation is
+      // wanted. `permissionDecision: "allow"` bypasses the permission prompt entirely,
+      // so emitting it for delete_memory meant this plugin silently auto-approved a
+      // destructive operation it had formed no view on.
+      //
+      // delete_memory  → say nothing. Exiting 0 with no hookSpecificOutput is the
+      //   documented "no opinion" path (the same thing this script already does at the
+      //   not-our-tool check) and hands the decision back to the normal permission flow.
+      //   Chosen over emitting the newer `defer` enum value deliberately: identical
+      //   semantics, no dependency on the host being new enough to know the value, and
+      //   less code — this plugin's whole virtue is being small and fail-safe.
+      // associate_memories → still allow. It is non-destructive, it links existing
+      //   records, and its payload was scanned; adding a prompt there is friction with
+      //   no risk behind it.
+      if (suffix === "delete_memory") {
+        appendLog(config.observability.logFile, { hook: "PreToolUse", tool: suffix, decision: "no-opinion", reasons: ["destructive; gate only scanned for secrets"] });
+        return process.exit(0);
+      }
       appendLog(config.observability.logFile, { hook: "PreToolUse", tool: suffix, decision: "allow" });
       emit("allow", "Vetted by automem-synapse (non-content write)");
       return process.exit(0);
@@ -77,7 +104,7 @@ function pick(obj, keys) {
     const decision = evaluateWritePolicy(candidate, config);
 
     if (decision.action === "block") {
-      appendLog(config.observability.logFile, { hook: "PreToolUse", tool: suffix, decision: "deny", reasons: decision.reasons });
+      appendLog(config.observability.logFile, { hook: "PreToolUse", tool: suffix, decision: "deny", reasons: decision.reasons, findings: kindsOf(decision.findings) });
       emit("deny", "Blocked by automem-synapse: " + decision.reasons.join("; "));
       return process.exit(0);
     }
