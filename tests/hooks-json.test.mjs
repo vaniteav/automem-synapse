@@ -12,7 +12,18 @@ test("hooks.json wires the three events with inline node commands", async () => 
   for (const ev of ["SessionStart", "UserPromptSubmit", "PreToolUse"]) {
     assert.match(h.hooks[ev][0].hooks[0].command, /node .*CLAUDE_PLUGIN_ROOT.*scripts/);
   }
-  assert.match(h.hooks.SessionStart[0].matcher, /startup\|compact/);
+});
+
+test("SessionStart matcher fires exactly where context does NOT already carry memories", async () => {
+  const h = JSON.parse(await readFile(new URL("../hooks/hooks.json", import.meta.url)));
+  const re = new RegExp("^(" + h.hooks.SessionStart[0].matcher + ")$");
+  // Context is empty / wiped / possibly-truncated ⇒ recall is needed.
+  assert.match("startup", re);
+  assert.match("clear", re);   // /clear wipes context; memories must be re-injected
+  assert.match("compact", re);
+  // These inherit the prior transcript, so the memories are already present.
+  assert.doesNotMatch("resume", re);
+  assert.doesNotMatch("fork", re);
 });
 
 test("PreToolUse matcher fires for ANY mcp server name, not just 'automem' (no fail-open on rename)", async () => {

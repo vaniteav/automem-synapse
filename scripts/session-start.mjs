@@ -8,7 +8,10 @@ import { getClientFactory, readStdin } from "./lib/runtime.mjs";
   const start = Date.now();
   try {
     const event = JSON.parse(await readStdin());
-    if (event.source && !["startup", "compact"].includes(event.source)) return process.exit(0);
+    // Recall only where context does NOT already carry it: startup (empty), clear
+    // (wiped), compact (may have dropped the block). resume/fork inherit the prior
+    // transcript, so re-injecting there would duplicate memories already present.
+    if (event.source && !["startup", "clear", "compact"].includes(event.source)) return process.exit(0);
     const config = loadConfig();
     if (!config.server.token) return process.exit(0);
     const createClient = await getClientFactory();

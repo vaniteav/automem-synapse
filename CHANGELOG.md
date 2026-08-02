@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-02 — unreleased maintenance
+- **Recall now fires after `/clear`.** `SessionStart` matched only `startup|compact`, so clearing the context wiped the injected memories and nothing re-injected them — the one session source where context is empty but recall never ran. `resume` and `fork` remain deliberately excluded: both inherit the prior transcript, so recall there would duplicate memories already present.
+- The source allow-list is enforced in two places (`hooks/hooks.json` matcher and the runtime guard in `scripts/session-start.mjs`); both are now covered by tests, so changing one without the other fails instead of silently dropping a source.
+- Verified against the current Claude Code `SessionStart` matcher set (`startup`, `resume`, `clear`, `compact`, `fork`).
+
 ## 0.1.1 — 2026-06-21
 - Secret scanner labels Anthropic keys (`sk-ant-…`) as `anthropic-key` instead of `openai-key`; openai pattern excludes the `ant-` prefix so a key yields one finding, not two.
 - CI: GitHub Actions runs the test suite on Node 20 + 22 for pushes and PRs.
