@@ -4,6 +4,23 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Mondays 09:17 UTC, off the hour because GitHub queues scheduled jobs.
+    #
+    # ⚠ SCOPE — read before trusting this to cover dependency drift.
+    # The pi plugins have a sibling `sdk-check.yml` that installs the newest pi
+    # and re-runs their suite. There is no equivalent here and there cannot be:
+    # this plugin has ZERO dependencies, and the thing it actually depends on —
+    # the Claude Code hook API — is not a package you can install a newer copy
+    # of. So a scheduled run here catches only runner and Node drift.
+    #
+    # Hook-API drift is real and has already bitten once: the SessionStart
+    # matcher set gained `fork`, and `clear` was never handled, so recall
+    # silently stopped covering a case for weeks (fixed 2026-08-02). Detecting
+    # that class still requires a human or agent reading the hook changelog.
+    # Do not treat a green schedule here as evidence the plugin is current.
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
 
 jobs:
   test:
