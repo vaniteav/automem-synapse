@@ -54,8 +54,28 @@ test("update_memory carrying a secret is denied", async () => {
   assert.equal(JSON.parse(stdout).hookSpecificOutput.permissionDecision, "deny");
 });
 
-test("delete_memory is allowed (no content candidate to police)", async () => {
+// CHANGED 2026-08-02. This previously asserted permissionDecision === "allow", on the
+// reasoning that a delete carries no content to police. That reasoning is sound and the
+// conclusion did not follow: `allow` BYPASSES the permission prompt, so the plugin was
+// silently auto-approving a destructive operation it had only secret-scanned. Having no
+// content to police is a reason to have no opinion, not a reason to approve.
+//
+// Emitting nothing (exit 0, no hookSpecificOutput) is the documented no-opinion path and
+// returns the decision to the normal permission flow — the same thing this script already
+// does for tools that aren't ours.
+test("delete_memory yields NO opinion, so the normal permission flow decides", async () => {
   const { stdout } = await run({ session_id: "s", tool_name: "mcp__automem__delete_memory", tool_input: { memory_id: "x" } }, base);
+  assert.equal(stdout.trim(), "", "must not emit a permissionDecision for a destructive op");
+});
+
+test("delete_memory carrying a secret is still DENIED, not merely deferred", async () => {
+  // The no-opinion path must not become a hole: an explicit deny still outranks it.
+  const { stdout } = await run({ session_id: "s", tool_name: "mcp__automem__delete_memory", tool_input: { memory_id: "x", content: "sk-ant-" + "A".repeat(24) } }, base);
+  assert.equal(JSON.parse(stdout).hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("associate_memories is still allowed (non-destructive, payload scanned)", async () => {
+  const { stdout } = await run({ session_id: "s", tool_name: "mcp__automem__associate_memories", tool_input: { memory1_id: "a", memory2_id: "b" } }, base);
   assert.equal(JSON.parse(stdout).hookSpecificOutput.permissionDecision, "allow");
 });
 
