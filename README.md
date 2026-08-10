@@ -28,15 +28,19 @@ Claude Code can call AutoMem tools, but it won't reach for them unprompted. With
 
 ## How it works
 
-The plugin wires three Claude Code hooks:
+The plugin wires five Claude Code hooks:
 
 | Hook | What it does |
 |---|---|
 | `SessionStart` | Runs startup recall queries; injects results into the system prompt. |
 | `UserPromptSubmit` | Runs per-turn recall before each prompt; injects relevant memories as additional context. |
 | `PreToolUse` | Intercepts `mcp__automem__store_memory`, `update_memory`, `delete_memory`, and `associate_memories`; runs the write gate; returns `allow`, `ask` (with reason), or `deny`. |
+| `PostToolUse` | Records that a gated write actually succeeded. Logs the outcome only — never the stored content. |
+| `PostToolUseFailure` | Records that a gated write failed after clearing the gate (timeout, 5xx, expired token), with a length-capped error string. |
 
-All three run as local `node` commands — no separate process to keep alive, no network calls except to your AutoMem instance.
+The gate's `allow` is a record of permission, not of persistence. The two `PostTool*` hooks close that loop so `/automem-status` can report writes that passed the gate and then failed — or that were never confirmed at all — instead of showing a clean log while memories silently fail to save.
+
+All five run as local `node` commands — no separate process to keep alive, no network calls except to your AutoMem instance. The two outcome hooks share the write gate's narrow matcher, so they fire only on AutoMem write calls, never on every tool use.
 
 ---
 
@@ -65,7 +69,7 @@ claude plugin marketplace add ./
 claude plugin install automem-synapse@vaniteav-marketplace
 ```
 
-The plugin registers the three hooks and two commands automatically. Nothing recalls yet — it has no token to talk to your server.
+The plugin registers the five hooks and two commands automatically. Nothing recalls yet — it has no token to talk to your server.
 
 ---
 
@@ -110,7 +114,7 @@ Any key you omit falls back to its default. Two ready-to-edit starting points ar
 | `projectOverrides` | Per-project overrides for recall limits and filters |
 | `writePolicy` | Write mode, auto/confirm/blocked categories, importance threshold, dedupe |
 | `behavior` | Display mode (`hidden`/`summary`/`full`) and content-length limits |
-| `observability.logFile` | Path to the JSONL decision log (default: `~/.claude/automem-synapse.log`) |
+| `observability.logFile` | Path to the JSONL log of gate decisions **and** write outcomes (default: `~/.claude/automem-synapse.log`). `/automem-status` correlates the two over a bounded recent window; log lines written before write-outcome recording existed carry no correlation key and are reported separately rather than counted as failures |
 
 ---
 
@@ -118,7 +122,7 @@ Any key you omit falls back to its default. Two ready-to-edit starting points ar
 
 | Command | What it does |
 |---|---|
-| `/automem-status` | Health check — shows connectivity, active config summary, and log file path |
+| `/automem-status` | Health check — connectivity, active config summary, log file path, and a recent write-outcome summary (confirmed / failed downstream / allowed-but-never-confirmed) |
 | `/automem-recall <query>` | Run a manual recall query — useful for debugging what the hook would inject |
 
 ---

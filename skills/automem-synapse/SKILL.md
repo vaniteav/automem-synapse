@@ -24,4 +24,4 @@ If the gate says `ask` with "possible duplicate of <id>", prefer `mcp__automem__
 ## Debugging
 - `/automem-status` — health, connectivity, active config, log file.
 - `/automem-recall <query>` — see what recall returns for a query.
-- Logs: the JSONL file in `observability.logFile` records each hook's decision, latency, and byte count.
+- Logs: the JSONL file in `observability.logFile` records each hook's decision, latency, and byte count — **and, for every gated write, what the write actually did afterwards** (`outcome: "success"` or `"failure"`, with the error and duration on a failure). The gate's `allow` line is written before the write executes, so it alone never proves a memory was saved; `/automem-status` joins the two by `toolUseId` and reports writes that failed downstream or were allowed but never confirmed. Outcomes and error kinds are logged; memory content never is.
