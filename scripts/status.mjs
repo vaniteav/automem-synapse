@@ -69,9 +69,14 @@ function correlate(lines) {
   }
   let allowed = 0, confirmed = 0, failedDownstream = 0, unconfirmed = 0;
   for (const [id, g] of gate) {
-    if (g.decision !== "allow") continue; // deny / ask / no-opinion never reached AutoMem
-    allowed++;
+    if (g.decision === "deny") continue; // the one decision that truly never reaches AutoMem
     const o = outcome.get(id);
+    // ask / no-opinion are permission-dependent: the user (or the normal permission flow) may
+    // still approve execution downstream of the gate. Without a matching outcome we cannot tell
+    // "denied at the prompt" from "still pending", so only count them once an outcome proves the
+    // write actually ran. `allow` always runs, so silence there really does mean in-flight.
+    if (g.decision !== "allow" && !o) continue;
+    allowed++;
     if (!o) unconfirmed++;
     else if (o.outcome === "failure") failedDownstream++;
     else confirmed++;

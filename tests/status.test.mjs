@@ -106,7 +106,24 @@ test("an outcome with no matching gate decision is its own category, not miscoun
 test("an outcome whose gate decision exists but was not an allow is not an orphan", async () => {
   const j = await statusWithLog([gate("t1", "no-opinion"), outcome("t1", "success")]);
   assert.equal(j.writeOutcomes.orphanOutcomes, 0);
-  assert.equal(j.writeOutcomes.allowed, 0);
+  // The outcome proves the write ran (no-opinion handed the call to the normal permission
+  // flow, which approved it) — it must be counted, not silently dropped. Regression for the
+  // bug Codex found: this exact fixture used to assert `allowed: 0` here.
+  assert.equal(j.writeOutcomes.allowed, 1);
+  assert.equal(j.writeOutcomes.confirmed, 1);
+});
+
+test("ask/no-opinion decisions are only counted once an outcome proves they actually ran (regression)", async () => {
+  const j = await statusWithLog([
+    gate("t1", "ask"), outcome("t1", "success"),                          // confirm prompt approved, write happened
+    gate("t2", "no-opinion"), outcome("t2", "failure", { error: "timeout" }), // delete approved via normal permission, then failed
+    gate("t3", "ask"), // prompt outcome unknown (denied, or still pending) — must NOT be invented as unconfirmed
+  ]);
+  assert.equal(j.writeOutcomes.allowed, 2);
+  assert.equal(j.writeOutcomes.confirmed, 1);
+  assert.equal(j.writeOutcomes.failedDownstream, 1);
+  assert.equal(j.writeOutcomes.unconfirmed, 0);
+  assert.equal(j.writeOutcomes.orphanOutcomes, 0);
 });
 
 test("a log of only legacy lines (no correlation key) still yields a sane status", async () => {
