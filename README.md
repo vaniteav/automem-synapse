@@ -28,19 +28,20 @@ Claude Code can call AutoMem tools, but it won't reach for them unprompted. With
 
 ## How it works
 
-The plugin wires five Claude Code hooks:
+The plugin wires six Claude Code hooks:
 
 | Hook | What it does |
 |---|---|
 | `SessionStart` | Runs startup recall queries; injects results into the system prompt. |
 | `UserPromptSubmit` | Runs per-turn recall before each prompt; injects relevant memories as additional context. |
 | `PreToolUse` | Intercepts `mcp__automem__store_memory`, `update_memory`, `delete_memory`, and `associate_memories`; runs the write gate; returns `allow`, `ask` (with reason), or `deny`. |
+| `PermissionDenied` | Records that a gated write was denied by auto mode after clearing the gate, with a length-capped denial reason. Observability only — it never asks for a retry. Fires in auto mode only. |
 | `PostToolUse` | Records that a gated write actually succeeded. Logs the outcome only — never the stored content. |
 | `PostToolUseFailure` | Records that a gated write failed after clearing the gate (timeout, 5xx, expired token), with a length-capped error string. |
 
-The gate's `allow` is a record of permission, not of persistence. The two `PostTool*` hooks close that loop so `/automem-status` can report writes that passed the gate and then failed — or that were never confirmed at all — instead of showing a clean log while memories silently fail to save.
+The gate's `allow` is a record of permission from this plugin, not of persistence — and not even of execution, since auto mode can still deny the call afterwards. The three outcome hooks close that loop so `/automem-status` can report writes that passed the gate and then failed, were denied downstream, or were never confirmed at all — instead of showing a clean log while memories silently fail to save.
 
-All five run as local `node` commands — no separate process to keep alive, no network calls except to your AutoMem instance. The two outcome hooks share the write gate's narrow matcher, so they fire only on AutoMem write calls, never on every tool use.
+All six run as local `node` commands — no separate process to keep alive, no network calls except to your AutoMem instance. The three outcome hooks share the write gate's narrow matcher, so they fire only on AutoMem write calls, never on every tool use.
 
 ---
 
@@ -69,7 +70,7 @@ claude plugin marketplace add ./
 claude plugin install automem-synapse@vaniteav-marketplace
 ```
 
-The plugin registers the five hooks and two commands automatically. Nothing recalls yet — it has no token to talk to your server.
+The plugin registers the six hooks and two commands automatically. Nothing recalls yet — it has no token to talk to your server.
 
 ---
 

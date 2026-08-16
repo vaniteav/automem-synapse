@@ -40,7 +40,8 @@ test("no false matcher-mismatch warning when mcpServerName is renamed (matcher i
 // ---------------------------------------------------------------------------
 
 const gate = (toolUseId, decision = "allow") => ({ ts: "2026-08-10T00:00:00.000Z", hook: "PreToolUse", tool: "store_memory", session: "s1", toolUseId, decision });
-const outcome = (toolUseId, outcome, extra = {}) => ({ ts: "2026-08-10T00:00:01.000Z", hook: outcome === "failure" ? "PostToolUseFailure" : "PostToolUse", tool: "store_memory", session: "s1", toolUseId, outcome, ...extra });
+const HOOK_OF = { failure: "PostToolUseFailure", "denied-downstream": "PermissionDenied" };
+const outcome = (toolUseId, outcome, extra = {}) => ({ ts: "2026-08-10T00:00:01.000Z", hook: HOOK_OF[outcome] || "PostToolUse", tool: "store_memory", session: "s1", toolUseId, outcome, ...extra });
 
 function runStatus(cfgPath) {
   return new Promise((resolve) => {
@@ -68,6 +69,32 @@ test("write outcomes: confirmed, failed downstream, and allowed-but-never-confir
   assert.equal(j.writeOutcomes.confirmed, 1);
   assert.equal(j.writeOutcomes.failedDownstream, 1);
   assert.equal(j.writeOutcomes.unconfirmed, 1);
+  assert.equal(j.writeOutcomes.orphanOutcomes, 0);
+});
+
+test("a write the gate allowed and auto mode then denied is its own bucket, not an unconfirmed write", async () => {
+  // The gate's `allow` is permission from this plugin, not permission to run: auto mode can
+  // deny the call afterwards, and that denial fires neither PostToolUse nor PostToolUseFailure.
+  // Before `permission-denied.mjs` existed there was no line at all and the reporter assumed
+  // an `allow` always runs, so this write was reported as allowed-but-never-confirmed — a
+  // decision the user's safety layer made, misfiled as a silent server failure.
+  const j = await statusWithLog([
+    gate("t1"), outcome("t1", "success"),
+    gate("t2"), outcome("t2", "denied-downstream", { reason: "Blocked by classifier" }),
+  ]);
+  assert.equal(j.writeOutcomes.deniedDownstream, 1);
+  assert.equal(j.writeOutcomes.unconfirmed, 0, "a denied write is known, not unknown");
+  assert.equal(j.writeOutcomes.allowed, 1, "it never reached AutoMem, so it is not an attempted write");
+  assert.equal(j.writeOutcomes.confirmed, 1);
+  assert.equal(j.writeOutcomes.failedDownstream, 0); // a denial is not a server fault
+  assert.equal(j.writeOutcomes.orphanOutcomes, 0);
+});
+
+test("a downstream denial of an ask/no-opinion write is counted too, not silently dropped", async () => {
+  // no-opinion hands the call to the normal permission flow; in auto mode that flow can deny it.
+  const j = await statusWithLog([gate("t1", "no-opinion"), outcome("t1", "denied-downstream")]);
+  assert.equal(j.writeOutcomes.deniedDownstream, 1);
+  assert.equal(j.writeOutcomes.allowed, 0);
   assert.equal(j.writeOutcomes.orphanOutcomes, 0);
 });
 

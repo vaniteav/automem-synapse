@@ -35,14 +35,15 @@ function readTail(file) {
 
 // Correlate gate decisions against downstream write outcomes.
 //
-// The gate logs `decision:"allow"` BEFORE the AutoMem write runs; `post-tool-use.mjs` logs
-// what the write actually did. Neither line is the whole story on its own, and reading the
-// gate's line as if it were is what let "my memories aren't saving" show up here as a clean
-// log and `healthy: true`. Joining them is done here, in a reporter a human explicitly ran,
-// rather than in a hook — hooks log facts, status does the analysis.
+// The gate logs `decision:"allow"` BEFORE the AutoMem write runs; `post-tool-use.mjs` and
+// `permission-denied.mjs` log what became of it. Neither line is the whole story on its own,
+// and reading the gate's line as if it were is what let "my memories aren't saving" show up
+// here as a clean log and `healthy: true`. Joining them is done here, in a reporter a human
+// explicitly ran, rather than in a hook — hooks log facts, status does the analysis.
 //
-// Join key is `toolUseId` (`tool_use_id`, documented on PreToolUse, PostToolUse and
-// PostToolUseFailure alike), so this is an exact id match, not timestamp proximity.
+// Join key is `toolUseId` (`tool_use_id`, documented on PreToolUse, PostToolUse,
+// PostToolUseFailure and PermissionDenied alike), so this is an exact id match, not timestamp
+// proximity.
 //
 // Two honest caveats, both consequences of a bounded window rather than bugs:
 //   * `unconfirmed` counts a write whose outcome record has not been written yet — the
@@ -53,7 +54,7 @@ function readTail(file) {
 //     `window` figure is reported alongside so the boundary is visible rather than implied.
 function correlate(lines) {
   const gate = new Map();      // toolUseId -> PreToolUse decision line
-  const outcome = new Map();   // toolUseId -> PostToolUse/PostToolUseFailure outcome line
+  const outcome = new Map();   // toolUseId -> PostToolUse/PostToolUseFailure/PermissionDenied outcome line
   let uncorrelatable = 0;
   for (const l of lines) {
     const isOutcome = typeof l.outcome === "string";
@@ -67,14 +68,24 @@ function correlate(lines) {
     if (!l.toolUseId) { uncorrelatable++; continue; }
     (isOutcome ? outcome : gate).set(l.toolUseId, l);
   }
-  let allowed = 0, confirmed = 0, failedDownstream = 0, unconfirmed = 0;
+  let allowed = 0, confirmed = 0, failedDownstream = 0, deniedDownstream = 0, unconfirmed = 0;
   for (const [id, g] of gate) {
-    if (g.decision === "deny") continue; // the one decision that truly never reaches AutoMem
+    if (g.decision === "deny") continue; // a gate denial truly never reaches AutoMem
     const o = outcome.get(id);
+    // A gate `allow` is permission from THIS plugin, not permission to run. In auto mode Claude
+    // Code's classifier can deny the call afterwards, and that denial fires neither PostToolUse
+    // nor PostToolUseFailure — `permission-denied.mjs` exists to log it. Such a write never
+    // reached AutoMem either, so it is excluded from `allowed` for the same reason a gate deny
+    // is, and reported in its own bucket. Counting it as an unconfirmed write (which is what
+    // happened before that hook existed, on the false assumption that an `allow` always runs)
+    // reported a decision the user's safety layer made as a silent server failure.
+    if (o?.outcome === "denied-downstream") { deniedDownstream++; continue; }
     // ask / no-opinion are permission-dependent: the user (or the normal permission flow) may
     // still approve execution downstream of the gate. Without a matching outcome we cannot tell
     // "denied at the prompt" from "still pending", so only count them once an outcome proves the
-    // write actually ran. `allow` always runs, so silence there really does mean in-flight.
+    // write actually ran. An `allow` with no outcome line is counted as unconfirmed, and stays
+    // the honest place for the genuinely unknowable: an in-flight write, and also a manual
+    // dialog denial, which fires no hook at all.
     if (g.decision !== "allow" && !o) continue;
     allowed++;
     if (!o) unconfirmed++;
@@ -83,7 +94,7 @@ function correlate(lines) {
   }
   let orphanOutcomes = 0;
   for (const id of outcome.keys()) if (!gate.has(id)) orphanOutcomes++;
-  return { window: lines.length, allowed, confirmed, failedDownstream, unconfirmed, orphanOutcomes, uncorrelatable };
+  return { window: lines.length, allowed, confirmed, failedDownstream, deniedDownstream, unconfirmed, orphanOutcomes, uncorrelatable };
 }
 
 function tailLog(file) {
