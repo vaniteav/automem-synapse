@@ -11,6 +11,10 @@
       { "matcher": "mcp__.*__store_memory|mcp__.*__update_memory|mcp__.*__delete_memory|mcp__.*__associate_memories",
         "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/pre-tool-use.mjs\"", "timeout": 10 }] }
     ],
+    "PermissionDenied": [
+      { "matcher": "mcp__.*__store_memory|mcp__.*__update_memory|mcp__.*__delete_memory|mcp__.*__associate_memories",
+        "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/permission-denied.mjs\"", "timeout": 5 }] }
+    ],
     "PostToolUse": [
       { "matcher": "mcp__.*__store_memory|mcp__.*__update_memory|mcp__.*__delete_memory|mcp__.*__associate_memories",
         "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/post-tool-use.mjs\"", "timeout": 5 }] }

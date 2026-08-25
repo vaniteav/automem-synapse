@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure"];
-const TOOL_EVENTS = ["PreToolUse", "PostToolUse", "PostToolUseFailure"];
+const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PermissionDenied", "PostToolUse", "PostToolUseFailure"];
+const TOOL_EVENTS = ["PreToolUse", "PermissionDenied", "PostToolUse", "PostToolUseFailure"];
 
 test("hooks.json wires every event with inline node commands", async () => {
   const h = JSON.parse(await readFile(new URL("../hooks/hooks.json", import.meta.url)));
@@ -20,12 +20,19 @@ test("hooks.json wires every event with inline node commands", async () => {
   }
 });
 
-// The gate logs `allow` before the write runs; these two events log what the write actually
-// did. They only correlate if they see the same calls, so their matcher must be the gate's.
+// The gate logs `allow` before the write runs; these three events log what became of it —
+// succeeded, failed, or denied by auto mode after the gate cleared it. They only correlate if
+// they see the same calls, so their matcher must be the gate's.
 test("the outcome events use the SAME matcher as the gate, so every gated write is followed up", async () => {
   const h = JSON.parse(await readFile(new URL("../hooks/hooks.json", import.meta.url)));
   assert.equal(h.hooks.PostToolUse[0].matcher, h.hooks.PreToolUse[0].matcher);
   assert.equal(h.hooks.PostToolUseFailure[0].matcher, h.hooks.PreToolUse[0].matcher);
+  assert.equal(h.hooks.PermissionDenied[0].matcher, h.hooks.PreToolUse[0].matcher);
+});
+
+test("PermissionDenied runs the denial recorder, not the success/failure one", async () => {
+  const h = JSON.parse(await readFile(new URL("../hooks/hooks.json", import.meta.url)));
+  assert.match(h.hooks.PermissionDenied[0].hooks[0].command, /permission-denied\.mjs/);
 });
 
 test("both outcome events run the one outcome recorder", async () => {

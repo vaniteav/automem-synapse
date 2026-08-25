@@ -1,6 +1,6 @@
 import { loadConfig } from "./lib/config.mjs";
 import { isWriteTool } from "./lib/write-tools.mjs";
-import { scanForSecrets } from "./lib/secret-scan.mjs";
+import { boundForLog } from "./lib/bounded-text.mjs";
 import { appendLog } from "./lib/log.mjs";
 import { readStdin } from "./lib/runtime.mjs";
 
@@ -34,28 +34,12 @@ import { readStdin } from "./lib/runtime.mjs";
 // to Claude as a warning about a tool that already completed, and stdout would be parsed for
 // decision JSON. Same idiom as `session-start.mjs`: swallow everything, exit 0.
 
-// Cap on the error string copied into the log. Verified against the hooks reference: the
+// The error string is bounded before it is logged, by the shared helper in
+// `lib/bounded-text.mjs` (redact to finding kinds, else hard-cap) — see that file for the
+// full rationale. Why it applies here specifically: verified against the hooks reference, the
 // PostToolUseFailure `error` field is "generally the same text Claude receives as the failed
 // tool's result", i.e. it is server-authored and can echo the request back — which for a
-// store_memory failure means it can echo the memory content. This plugin's logging stance
-// (see `pre-tool-use.mjs`) is kinds and outcomes, never content and never a matched secret
-// value, so the error is bounded on two axes before it is written:
-//   1. if the repo's own secret scanner fires on it, the text is dropped entirely and only
-//      the finding KINDS are kept — identical treatment to a matched secret in the gate;
-//   2. otherwise it is hard-capped at MAX_ERROR_CHARS.
-// The cap bounds leakage, it does not eliminate it: the first 200 characters of an echoing
-// error could still contain content. That is the accepted trade — the head of the string is
-// where the status code and error class live, and an error field with nothing diagnostic in
-// it would not have caught the failure this issue is about.
-const MAX_ERROR_CHARS = 200;
-
-function safeError(raw) {
-  if (raw === undefined || raw === null) return undefined; // a failure can arrive with no error text (e.g. an abort)
-  const text = String(raw);
-  const kinds = scanForSecrets(text).map((f) => f.kind);
-  if (kinds.length) return `[redacted: ${kinds.join(",")}]`;
-  return text.length > MAX_ERROR_CHARS ? text.slice(0, MAX_ERROR_CHARS) + "…[truncated]" : text;
-}
+// store_memory failure means it can echo the memory content.
 
 (async () => {
   try {
@@ -89,7 +73,7 @@ function safeError(raw) {
     // it is the stored record, i.e. the content itself.
     if (typeof event.duration_ms === "number") record.ms = event.duration_ms;
     if (failed) {
-      record.error = safeError(event.error);
+      record.error = boundForLog(event.error);
       if (event.is_interrupt === true) record.interrupted = true; // an abort, not a server fault
     }
     appendLog(config.observability.logFile, record);

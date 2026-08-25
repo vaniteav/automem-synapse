@@ -6,7 +6,7 @@ import { readFile, writeFile, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const hook = fileURLToPath(new URL("../scripts/post-tool-use.mjs", import.meta.url));
+const hook = fileURLToPath(new URL("../scripts/permission-denied.mjs", import.meta.url));
 
 function run(input, env = {}) {
   return new Promise((resolve, reject) => {
@@ -29,7 +29,7 @@ function run(input, env = {}) {
 
 // Each test gets its own log file + config, so assertions are on lines this test wrote.
 async function withLog() {
-  const dir = await mkdtemp(join(tmpdir(), "amsyn-post-"));
+  const dir = await mkdtemp(join(tmpdir(), "amsyn-denied-"));
   const logFile = join(dir, "synapse.log");
   const cfgPath = join(dir, "automem-synapse.json");
   await writeFile(cfgPath, JSON.stringify({ observability: { logFile } }));
@@ -42,106 +42,80 @@ async function withLog() {
   };
 }
 
-test("PostToolUse success records a success outcome carrying the correlation key", async () => {
+test("an auto-mode denial of a gated write is recorded, carrying the correlation key", async () => {
   const t = await withLog();
   const { code, stdout } = await run({
     session_id: "s1",
-    hook_event_name: "PostToolUse",
+    permission_mode: "auto",
+    hook_event_name: "PermissionDenied",
     tool_name: "mcp__automem__store_memory",
     tool_input: { content: "Chose X over Y" },
-    tool_response: { id: "m-42", success: true },
     tool_use_id: "toolu_01ABC",
-    duration_ms: 12,
+    reason: "Blocked by classifier",
   }, t.env);
   assert.equal(code, 0);
-  assert.equal(stdout.trim(), "", "these events cannot change an outcome; stdout must stay empty");
+  // The denial already happened; exit code and stderr are ignored for this event, and the one
+  // stdout lever (`retry`) is deliberately unused — this hook does not argue with the
+  // permission system, it only records what it decided.
+  assert.equal(stdout.trim(), "", "no hookSpecificOutput: we never ask the model to retry a denied write");
   const [line] = await t.lines();
-  assert.ok(line, "expected one outcome record");
-  assert.equal(line.hook, "PostToolUse");
-  assert.equal(line.outcome, "success");
+  assert.ok(line, "expected one denial record");
+  assert.equal(line.hook, "PermissionDenied");
+  assert.equal(line.outcome, "denied-downstream");
   assert.equal(line.tool, "store_memory");
   assert.equal(line.toolUseId, "toolu_01ABC"); // the join key /automem-status correlates on
   assert.equal(line.session, "s1");
-  assert.equal(line.ms, 12);
+  assert.equal(line.reason, "Blocked by classifier");
   assert.ok(line.ts, "log convention: ts first");
 });
 
-test("PostToolUse never copies tool_response into the log (it is the stored content)", async () => {
+test("a denial with no reason text still records the outcome", async () => {
+  const t = await withLog();
+  const { code } = await run({
+    session_id: "s1", hook_event_name: "PermissionDenied",
+    tool_name: "mcp__automem__delete_memory", tool_use_id: "toolu_01ABC",
+  }, t.env);
+  assert.equal(code, 0);
+  const [line] = await t.lines();
+  assert.equal(line.outcome, "denied-downstream"); // the fact of the denial is the load-bearing part
+  assert.equal(line.tool, "delete_memory");
+  assert.equal("reason" in line, false);
+});
+
+test("PermissionDenied never copies tool_input into the log (it is the memory content)", async () => {
   const t = await withLog();
   await run({
     session_id: "s1",
-    hook_event_name: "PostToolUse",
+    hook_event_name: "PermissionDenied",
     tool_name: "mcp__automem__store_memory",
     tool_input: { content: "SUPER-SECRET-MEMORY-BODY" },
-    tool_response: { stored: "SUPER-SECRET-MEMORY-BODY" },
     tool_use_id: "toolu_01ABC",
+    reason: "Blocked by classifier",
   }, t.env);
   const raw = JSON.stringify(await t.lines());
   assert.equal(raw.includes("SUPER-SECRET-MEMORY-BODY"), false);
 });
 
-test("PostToolUseFailure records a failure outcome with the error captured", async () => {
-  const t = await withLog();
-  const { code, stdout } = await run({
-    session_id: "s1",
-    hook_event_name: "PostToolUseFailure",
-    tool_name: "mcp__automem__store_memory",
-    tool_input: { content: "Chose X over Y" },
-    tool_use_id: "toolu_01ABC",
-    error: "MCP error -32603: upstream returned 503",
-    is_interrupt: false,
-    duration_ms: 4187,
-  }, t.env);
-  assert.equal(code, 0);
-  assert.equal(stdout.trim(), "");
-  const [line] = await t.lines();
-  assert.equal(line.hook, "PostToolUseFailure");
-  assert.equal(line.outcome, "failure");
-  assert.equal(line.error, "MCP error -32603: upstream returned 503");
-  assert.equal(line.ms, 4187);
-  assert.equal("interrupted" in line, false); // only recorded when the failure WAS an abort
-});
-
-test("an abort is marked interrupted and survives a missing error string", async () => {
-  const t = await withLog();
-  const { code } = await run({
-    session_id: "s1",
-    hook_event_name: "PostToolUseFailure",
-    tool_name: "mcp__automem__store_memory",
-    tool_use_id: "toolu_01ABC",
-    is_interrupt: true,
-  }, t.env);
-  assert.equal(code, 0);
-  const [line] = await t.lines();
-  assert.equal(line.outcome, "failure"); // must still register as a failure with no error text
-  assert.equal(line.interrupted, true);
-  assert.equal("error" in line, false);
-});
-
-test("a long error is truncated so a server echoing the request cannot fill the log", async () => {
+test("a long reason is truncated so a classifier quoting the call cannot fill the log", async () => {
   const t = await withLog();
   await run({
-    session_id: "s1",
-    hook_event_name: "PostToolUseFailure",
-    tool_name: "mcp__automem__store_memory",
-    tool_use_id: "toolu_01ABC",
-    error: "Exit code 1\n" + "A".repeat(5000),
+    session_id: "s1", hook_event_name: "PermissionDenied",
+    tool_name: "mcp__automem__store_memory", tool_use_id: "toolu_01ABC",
+    reason: "Auto mode could not evaluate this action and is blocking it for safety. " + "A".repeat(5000),
   }, t.env);
   const [line] = await t.lines();
-  assert.ok(line.error.length < 300, `error should be capped, got ${line.error.length}`);
-  assert.match(line.error, /truncated/);
-  assert.match(line.error, /^Exit code 1/); // the diagnostic head is what survives
+  assert.ok(line.reason.length < 300, `reason should be capped, got ${line.reason.length}`);
+  assert.match(line.reason, /truncated/);
+  assert.match(line.reason, /^Auto mode could not evaluate/); // the diagnostic head is what survives
 });
 
-test("an error echoing a secret is reduced to finding KINDS, never the value", async () => {
+test("a reason echoing a secret is reduced to finding KINDS, never the value", async () => {
   const t = await withLog();
   const secret = "sk-ant-" + "A".repeat(30);
   await run({
-    session_id: "s1",
-    hook_event_name: "PostToolUseFailure",
-    tool_name: "mcp__automem__store_memory",
-    tool_use_id: "toolu_01ABC",
-    error: `rejected payload: {"content":"${secret}"}`,
+    session_id: "s1", hook_event_name: "PermissionDenied",
+    tool_name: "mcp__automem__store_memory", tool_use_id: "toolu_01ABC",
+    reason: `Refusing to store credential material: ${secret}`,
   }, t.env);
   const raw = JSON.stringify(await t.lines());
   assert.equal(raw.includes(secret), false, "the matched secret value must never reach the log");
@@ -149,43 +123,47 @@ test("an error echoing a secret is reduced to finding KINDS, never the value", a
 });
 
 test("a non-AutoMem tool logs nothing and exits 0", async () => {
+  // Auto mode denies plenty of Bash calls. Those are Claude Code's business to report, not
+  // this plugin's — and nothing in our log could be joined to them anyway.
   const t = await withLog();
   const { code, stdout } = await run({
-    session_id: "s1", hook_event_name: "PostToolUse",
-    tool_name: "Bash", tool_input: { command: "ls" }, tool_use_id: "toolu_01ABC",
+    session_id: "s1", hook_event_name: "PermissionDenied",
+    tool_name: "Bash", tool_input: { command: "rm -rf /tmp/build" },
+    tool_use_id: "toolu_01ABC", reason: "Blocked by classifier",
   }, t.env);
   assert.equal(code, 0);
   assert.equal(stdout.trim(), "");
   assert.deepEqual(await t.lines(), []);
 });
 
-test("a read tool on OUR server logs nothing (only writes have outcomes to record)", async () => {
+test("a read tool on OUR server logs nothing (only writes are correlated)", async () => {
   const t = await withLog();
   await run({
-    session_id: "s1", hook_event_name: "PostToolUse",
-    tool_name: "mcp__automem__recall_memory", tool_input: { query: "x" }, tool_use_id: "toolu_01ABC",
+    session_id: "s1", hook_event_name: "PermissionDenied",
+    tool_name: "mcp__automem__recall_memory", tool_input: { query: "x" },
+    tool_use_id: "toolu_01ABC", reason: "Blocked by classifier",
   }, t.env);
   assert.deepEqual(await t.lines(), []);
 });
 
 test("narrowing follows the CONFIGURED server name, like the gate", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "amsyn-post-"));
+  const dir = await mkdtemp(join(tmpdir(), "amsyn-denied-"));
   const logFile = join(dir, "synapse.log");
   const cfgPath = join(dir, "automem-synapse.json");
   await writeFile(cfgPath, JSON.stringify({ mcpServerName: "mem", observability: { logFile } }));
   const env = { AUTOMEM_CONFIG_PATH: cfgPath, AUTOMEM_API_KEY: "tok" };
   const read = async () => { try { return (await readFile(logFile, "utf8")).trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
 
-  await run({ hook_event_name: "PostToolUse", tool_name: "mcp__automem__store_memory", tool_use_id: "a" }, env);
+  await run({ hook_event_name: "PermissionDenied", tool_name: "mcp__automem__store_memory", tool_use_id: "a" }, env);
   assert.deepEqual(await read(), [], "the default server name is not this install's server");
 
-  await run({ hook_event_name: "PostToolUse", tool_name: "mcp__mem__store_memory", tool_use_id: "b" }, env);
+  await run({ hook_event_name: "PermissionDenied", tool_name: "mcp__mem__store_memory", tool_use_id: "b" }, env);
   const lines = await read();
   assert.equal(lines.length, 1);
   assert.equal(lines[0].toolUseId, "b");
 });
 
-test("malformed stdin exits 0 silently — these events cannot block, so erroring is pure downside", async () => {
+test("malformed stdin exits 0 silently — the denial already stands, so erroring is pure downside", async () => {
   const t = await withLog();
   const { code, stdout } = await run("not json {", t.env);
   assert.equal(code, 0);
@@ -198,16 +176,5 @@ test("empty stdin exits 0 silently", async () => {
   const { code, stdout } = await run("", t.env);
   assert.equal(code, 0);
   assert.equal(stdout.trim(), "");
-});
-
-test("a missing hook_event_name still lands a failure on the failure side", async () => {
-  // Belt-and-braces fallback: only the failure event carries a top-level `error`, so an
-  // absent/renamed event name must not silently record a failed write as a success.
-  const t = await withLog();
-  await run({
-    session_id: "s1", tool_name: "mcp__automem__store_memory",
-    tool_use_id: "toolu_01ABC", error: "boom",
-  }, t.env);
-  const [line] = await t.lines();
-  assert.equal(line.outcome, "failure");
+  assert.deepEqual(await t.lines(), [], "nothing parsed ⇒ nothing to record; a stray line here is a bug");
 });
