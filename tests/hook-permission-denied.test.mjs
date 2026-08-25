@@ -9,8 +9,20 @@ import { join } from "node:path";
 const hook = fileURLToPath(new URL("../scripts/permission-denied.mjs", import.meta.url));
 
 function run(input, env = {}) {
-  return new Promise((resolve) => {
-    const cp = execFile("node", [hook], { env: { ...process.env, ...env } }, (err, stdout) => resolve({ code: err?.code || 0, stdout }));
+  return new Promise((resolve, reject) => {
+    const cp = execFile("node", [hook], { env: { ...process.env, ...env } }, (err, stdout) => {
+      // A child killed by a SIGNAL carries `err.signal` and no numeric `err.code`, so the old
+      // `err?.code || 0` laundered a crash into a clean exit 0. Every `assert.equal(code, 0)`
+      // below would then pass on a handler that died before it ran — a segfault, an OOM kill,
+      // a runner timeout — which is the one failure this suite must never report as success.
+      //
+      // Rejecting rather than returning the signal as data is deliberate: several tests in
+      // this file assert only on the log or on stdout and never look at `code` at all, so a
+      // value they do not read cannot protect them. A rejection fails whichever test hit it,
+      // by name, with the signal in the message.
+      if (err?.signal) return reject(new Error(`${hook} was killed by signal ${err.signal}`));
+      resolve({ code: err?.code ?? 0, stdout });
+    });
     cp.stdin.end(typeof input === "string" ? input : JSON.stringify(input));
   });
 }
@@ -164,4 +176,5 @@ test("empty stdin exits 0 silently", async () => {
   const { code, stdout } = await run("", t.env);
   assert.equal(code, 0);
   assert.equal(stdout.trim(), "");
+  assert.deepEqual(await t.lines(), [], "nothing parsed ⇒ nothing to record; a stray line here is a bug");
 });

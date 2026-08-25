@@ -110,6 +110,50 @@ test("a failure with no error text still registers as lastFailure", async () => 
   assert.equal(j.lastFailure?.outcome, "failure");
 });
 
+// ---------------------------------------------------------------------------
+// `lastDenial`, kept separate from `lastFailure` on purpose. The handler records a bounded
+// `reason` on every denial; until this field existed nothing ever showed it, so a user hitting
+// "Classifier unavailable" saw a count in `deniedDownstream` and no way to learn why.
+// ---------------------------------------------------------------------------
+
+test("a downstream denial registers as lastDenial, carrying the reason auto mode gave", async () => {
+  const j = await statusWithLog([gate("t1"), outcome("t1", "denied-downstream", { reason: "Classifier unavailable" })]);
+  assert.ok(j.lastDenial, "the denial the handler recorded must be reachable from the report");
+  assert.equal(j.lastDenial.outcome, "denied-downstream");
+  assert.equal(j.lastDenial.reason, "Classifier unavailable"); // the whole point: the WHY, not just the count
+  assert.equal(j.lastDenial.toolUseId, "t1");
+});
+
+test("a denial does NOT register as lastFailure — it is a decision, not a fault", async () => {
+  // Folding denials into `lastFailure` would put the user's own safety layer next to timeouts
+  // and 5xxs, and send them hunting a server fault that does not exist.
+  const j = await statusWithLog([gate("t1"), outcome("t1", "denied-downstream", { reason: "Blocked by classifier" })]);
+  assert.equal(j.lastFailure, null, "a denial must never read as a server failure");
+  assert.equal(j.lastDenial?.reason, "Blocked by classifier");
+});
+
+test("a downstream failure registers as lastFailure and NOT as lastDenial", async () => {
+  // The separation has to hold in both directions, or the two fields are just one field twice.
+  const j = await statusWithLog([gate("t1"), outcome("t1", "failure", { error: "upstream returned 503" })]);
+  assert.equal(j.lastFailure?.outcome, "failure");
+  assert.equal(j.lastDenial, null);
+});
+
+test("lastDenial is null when nothing was denied", async () => {
+  const j = await statusWithLog([gate("t1"), outcome("t1", "success")]);
+  assert.equal(j.lastDenial, null);
+  assert.equal(j.lastFailure, null);
+});
+
+test("lastDenial reports the most recent denial, like lastFailure reports the most recent failure", async () => {
+  const j = await statusWithLog([
+    gate("t1"), outcome("t1", "denied-downstream", { reason: "Blocked by classifier" }),
+    gate("t2"), outcome("t2", "denied-downstream", { reason: "Classifier unavailable" }),
+  ]);
+  assert.equal(j.lastDenial.reason, "Classifier unavailable");
+  assert.equal(j.lastDenial.toolUseId, "t2");
+});
+
 test("gate decisions that never reached AutoMem are not counted as writes", async () => {
   const j = await statusWithLog([
     gate("t1", "deny"),
@@ -165,6 +209,7 @@ test("a log of only legacy lines (no correlation key) still yields a sane status
   assert.equal(j.writeOutcomes.allowed, 0);
   assert.equal(j.writeOutcomes.orphanOutcomes, 0);
   assert.equal(j.lastFailure, null);
+  assert.equal(j.lastDenial, null);
   assert.ok(j.lastHookResult, "the last line is still reported");
 });
 
@@ -189,6 +234,8 @@ test("a missing log file reports nulls rather than throwing", async () => {
   await writeFile(cfgPath, JSON.stringify({ observability: { logFile: join(dir, "nope.log") } }));
   const j = await runStatus(cfgPath);
   assert.equal(j.lastHookResult, null);
+  assert.equal(j.lastFailure, null);
+  assert.equal(j.lastDenial, null);
   assert.equal(j.writeOutcomes, null);
 });
 

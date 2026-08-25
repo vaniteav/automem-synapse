@@ -43,7 +43,11 @@ function readTail(file) {
 //
 // Join key is `toolUseId` (`tool_use_id`, documented on PreToolUse, PostToolUse,
 // PostToolUseFailure and PermissionDenied alike), so this is an exact id match, not timestamp
-// proximity.
+// proximity. Two states the maps below could in principle reach are intentionally not
+// special-cased because the documented semantics make them unreachable: a repeated
+// `tool_use_id` (it identifies one tool call, so the last-write-wins `set` can never shadow a
+// different record) and a gate `deny` carrying a downstream outcome (PermissionDenied does not
+// fire when a PreToolUse hook blocks a call, so the `continue` below cannot drop a real one).
 //
 // Two honest caveats, both consequences of a bounded window rather than bugs:
 //   * `unconfirmed` counts a write whose outcome record has not been written yet — the
@@ -112,8 +116,25 @@ function tailLog(file) {
     // longer surfaces. That is the intended trade — the field answers "did something break
     // lately", and a months-old deny resurfacing forever was noise, not signal.
     const lastFailure = [...lines].reverse().find((l) => l.error || l.decision === "deny" || l.outcome === "failure") || null;
-    return { last, lastFailure, writeOutcomes: correlate(lines.slice(-CORRELATION_WINDOW)) };
-  } catch { return { last: null, lastFailure: null, writeOutcomes: null }; }
+    // A downstream denial matches none of the three tests above — it carries no `error`, its
+    // `decision` is not `deny` (the gate allowed it; auto mode is what refused), and its
+    // outcome is `denied-downstream`, not `failure`. So the bounded `reason`
+    // `permission-denied.mjs` goes to some trouble to capture was being recorded and then
+    // shown to nobody: a user hitting "Classifier unavailable" could see the count in
+    // `deniedDownstream` and still not learn why, which is the question this whole path
+    // exists to answer.
+    //
+    // Broadening `lastFailure`'s predicate to cover it would have been one line, and would
+    // have been wrong. `lastFailure` is what the reporter quotes when it says something
+    // broke; a denial is the user's own safety layer working exactly as designed. Presenting
+    // it beside timeouts and 5xxs sends people hunting a server fault that does not exist —
+    // the same reason the correlator keeps `deniedDownstream` out of `failedDownstream`. Two
+    // fields, two meanings: a log containing only denials reports `lastFailure: null`, which
+    // is the truth, and `lastDenial` is null whenever nothing was denied. Both are found over
+    // the same tail read, so both share the TAIL_BYTES bound and its trade-off.
+    const lastDenial = [...lines].reverse().find((l) => l.outcome === "denied-downstream") || null;
+    return { last, lastFailure, lastDenial, writeOutcomes: correlate(lines.slice(-CORRELATION_WINDOW)) };
+  } catch { return { last: null, lastFailure: null, lastDenial: null, writeOutcomes: null }; }
 }
 async function preToolUseMatcher() {
   try {
@@ -139,7 +160,7 @@ function matcherFires(matcher, serverName) {
     healthy = h.ok; status = h.status;
     memoryCount = h.body?.memory_count ?? h.body?.count ?? h.body?.memories ?? null;
   } catch { /* report unhealthy */ }
-  const { last, lastFailure, writeOutcomes } = tailLog(config.observability.logFile);
+  const { last, lastFailure, lastDenial, writeOutcomes } = tailLog(config.observability.logFile);
   const matcher = await preToolUseMatcher();
   const matcherMismatch = matcherFires(matcher, config.mcpServerName)
     ? null
@@ -155,6 +176,7 @@ function matcherFires(matcher, serverName) {
     turnRecall: config.turnRecall.enabled,
     lastHookResult: last,
     lastFailure,
+    lastDenial,
     writeOutcomes,
     logFile: config.observability.logFile,
   }, null, 2));

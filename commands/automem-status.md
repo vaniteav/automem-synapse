@@ -1,7 +1,7 @@
 ---
 description: Show automem-synapse health, AutoMem connectivity, active config, and whether recent memory writes actually landed.
 ---
-Run the status reporter and summarize the result for the user (health, server URL, token presence, write-policy mode, recall toggles, last hook result/failure, and any matcher mismatch warning):
+Run the status reporter and summarize the result for the user (health, server URL, token presence, write-policy mode, recall toggles, last hook result, last failure, last denial, and any matcher mismatch warning):
 
 !`node "${CLAUDE_PLUGIN_ROOT}/scripts/status.mjs"`
 
@@ -9,9 +9,11 @@ Then report the `writeOutcomes` block in plain language. It correlates gate deci
 
 - `confirmed` — allowed and confirmed saved. This is the healthy case.
 - `failedDownstream` — cleared the gate, then did not land (timeout, 5xx, expired token, or an aborted call, which the record marks `interrupted: true`). **Call this out even when `healthy` is true**: the server can be reachable now and still have dropped writes. Quote `lastFailure` for the error, and if it was an interrupt say so — that is a cancelled call, not a broken server.
-- `deniedDownstream` — the gate raised no objection, then Claude Code's auto mode denied the call, so the write never ran. This is the permission system working, not a fault: report it plainly and do not present it as a broken server. A steady count means auto mode keeps refusing this plugin's memory writes, which is worth surfacing as a configuration question. Note the limit: only auto-mode denials are recorded here — denying a permission dialog by hand fires no hook, so those writes still land in `unconfirmed`.
+- `deniedDownstream` — the gate raised no objection, then Claude Code's auto mode denied the call, so the write never ran. This is the permission system working, not a fault: report it plainly and do not present it as a broken server. **Quote `lastDenial.reason` for why auto mode refused** — that is usually the fixed text `Blocked by classifier`, but it can be the classifier's own explanation, or `Classifier unavailable`, which is a different problem with a different fix. A steady count means auto mode keeps refusing this plugin's memory writes, which is worth surfacing as a configuration question. Note the limit: only auto-mode denials are recorded here — denying a permission dialog by hand fires no hook, so those writes still land in `unconfirmed`.
 - `unconfirmed` — allowed, but nothing ever recorded an outcome. Expect a small number (a write in flight when the command ran, or one denied at a manual permission dialog); a persistent or growing count is the silent-failure case worth investigating.
 - `orphanOutcomes` — a write outcome with no matching gate decision, i.e. a write the gate never saw. Usually harmless (the log window cut the pair apart, or the log was rotated), but if it is large relative to `window`, say the gate may not be firing for this server and point at the `matcherMismatch` warning.
 - `uncorrelatable` — log lines predating write-outcome recording. These carry no correlation key, so nothing can be concluded about them. Say so; do not present them as failures.
+
+`lastFailure` and `lastDenial` are separate fields and mean different things: `lastFailure` is the most recent thing that broke (a gate denial, a downstream failure, any record carrying an error), `lastDenial` the most recent write auto mode refused. A denial never appears in `lastFailure`, deliberately — do not report one as a server fault, and do not report `lastFailure: null` as "nothing to see" if `lastDenial` is set. Either is null when the tail of the log holds no such record.
 
 If `writeOutcomes` is null the log file is missing or unreadable — mention it rather than reporting zero writes.
